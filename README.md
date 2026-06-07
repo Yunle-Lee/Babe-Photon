@@ -255,7 +255,7 @@ Apache 2.0 —— 详见 [LICENSE](./LICENSE)。Photon 架构及三大机制设�
 
 ---
 
-## Appendix A: English Deep-Dive Documents
+## Appendix A: 中文深度解析文档
 
 # Photon Architecture: An Academic Analysis
 
@@ -1397,7 +1397,7 @@ range at batch, consistent with the H100 row in the benchmark table.
 
 ---
 
-## Appendix B: 中文深度解析文档
+## Appendix B: English Deep-Dive Documents · 英文深度解析文档
 
 # Photon 架构：学术分析
 
