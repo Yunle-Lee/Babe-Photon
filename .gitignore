@@ -1,0 +1,48 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# Models / large files
+models/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Benchmark outputs
+benchmark_results/*.png
+benchmark_results/*.json
+
+# API keys / secrets
+.env
+*.key

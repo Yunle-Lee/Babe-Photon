@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photon-amd"
+version = "0.2.0"
+description = "Photon inference engine for AMD GPUs — pipelined decoding with GPU bubble elimination via ROCm/HIP"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Photon AMD Contributors" },
+]
+keywords = [
+    "llm", "inference", "amd", "rocm", "hip",
+    "pipeline", "gpu-bubble", "photon", "moondream",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-benchmark",
+]
+all = [
+    "photon-amd[dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/photon-amd"
+Repository = "https://github.com/your-org/photon-amd"
+Issues = "https://github.com/your-org/photon-amd/issues"
+
+[tool.setuptools.packages.find]
+include = ["photon_amd*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "gpu: tests that require an AMD GPU with ROCm",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
