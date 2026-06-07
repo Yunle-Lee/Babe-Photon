@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Optional
 
 import torch
 import torch.nn as nn

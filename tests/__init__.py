@@ -5,5 +5,3 @@ Run with:
   pytest tests/ -v -k gpu    # only GPU tests
   pytest tests/ -v -k "not gpu"  # skip GPU tests
 """
-
-import pytest

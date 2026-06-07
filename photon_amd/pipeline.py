@@ -47,8 +47,8 @@ AMD ROCm implementation notes
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 import torch
 

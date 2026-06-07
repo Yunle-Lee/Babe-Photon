@@ -24,6 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev]"
 
       - name: Run tests (CPU-only)
@@ -32,5 +33,4 @@ jobs:
 
       - name: Check style
         run: |
-          pip install ruff
           ruff check photon_amd/ examples/ tests/

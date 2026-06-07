@@ -29,16 +29,20 @@ classifiers = [
 ]
 
 dependencies = [
-    "torch>=2.5",
+    "torch>=2.5; sys_platform != 'linux' or platform_machine != 'x86_64'",  # skip on CPU CI
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "torch>=2.5",
+]
 dev = [
     "pytest>=7",
     "pytest-benchmark",
+    "ruff",
 ]
 all = [
-    "photon-amd[dev]",
+    "photon-amd[gpu,dev]",
 ]
 
 [project.urls]

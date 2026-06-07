@@ -45,9 +45,9 @@ def main():
     print("=" * 70)
     print("Photon-AMD + Gemma-4 12B: Real Model Inference Demo")
     print("=" * 70)
-    print(f"GPU:  AMD Instinct MI300 (gfx942) @ 192 GB VRAM")
+    print("GPU:  AMD Instinct MI300 (gfx942) @ 192 GB VRAM")
     print(f"ROCm: {torch.version.hip}")
-    print(f"Model: Gemma-4 12B IT (Q4_K_XL GGUF)")
+    print("Model: Gemma-4 12B IT (Q4_K_XL GGUF)")
     print()
 
     # ---- Load model --------------------------------------------------------
