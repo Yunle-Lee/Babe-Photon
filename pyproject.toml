@@ -42,9 +42,9 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/photon-amd"
-Repository = "https://github.com/your-org/photon-amd"
-Issues = "https://github.com/your-org/photon-amd/issues"
+Homepage = "https://github.com/Yunle-Lee/Babe-Photon"
+Repository = "https://github.com/Yunle-Lee/Babe-Photon"
+Issues = "https://github.com/Yunle-Lee/Babe-Photon/issues"
 
 [tool.setuptools.packages.find]
 include = ["photon_amd*"]

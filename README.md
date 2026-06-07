@@ -8,316 +8,247 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.10%2B-orange)](https://pytorch.org/)
 [![GPU](https://img.shields.io/badge/GPU-AMD%20Instinct%20MI300-9cf)](https://www.amd.com/en/products/accelerators/instinct/mi300.html)
 
-**High-efficiency LLM inference engine for AMD GPUs — pipelined decoding
-with GPU bubble elimination via ROCm/HIP.**
+**High-efficiency LLM inference engine for AMD GPUs — pipelined decoding with GPU bubble elimination via ROCm/HIP.**
+
+**面向 AMD GPU 的高效 LLM 推理引擎 —— 基于 ROCm/HIP 的流水化解码，消除 GPU 气泡。**
 
 </div>
 
 ---
 
-## Overview
+## Overview · 概述
 
-**Photon-AMD** is an educational and practical implementation of Moondream's
-[Photon](https://moondream.ai/p/photon) inference engine, ported to AMD
-ROCm/HIP.  It demonstrates how to eliminate the **GPU bubble** — idle time
-where the GPU waits for CPU bookkeeping between decode steps — achieving
-**up to 35% higher decode throughput**.
+**Photon-AMD** is an educational and practical implementation of Moondream's [Photon](https://moondream.ai/p/photon) inference engine, ported to AMD ROCm/HIP.
+**Photon-AMD** 是 Moondream [Photon](https://moondream.ai/p/photon) 推理引擎的教育与实践实现，已移植至 AMD ROCm/HIP。
 
-This project serves two purposes:
+It demonstrates how to eliminate the **GPU bubble** — idle time where the GPU waits for CPU bookkeeping between decode steps — achieving **up to 56% higher decode throughput**.
+它演示了如何消除 **GPU 气泡** —— 解码步骤之间 GPU 等待 CPU 完成簿记工作的空闲时间 —— 可提升高达 **56% 的解码吞吐量**。
 
-1. **📖 Learning resource**: Deep-dive analysis of Photon's three core
-   mechanisms with mathematical cost models and empirical validation.
-2. **🔧 Reference implementation**: Clean, well-documented AMD ROCm code
-   that can serve as a starting point for production inference engines
-   on AMD GPUs.
+This project serves two purposes. 本项目兼具两大用途：
 
-### Background
+1. **Learning resource · 学习资源**: Deep-dive analysis of Photon's three core mechanisms with mathematical cost models and empirical validation. 对 Photon 三大核心机制的深度分析，附有数学成本模型与实验验证。
+2. **Reference implementation · 参考实现**: Clean, well-documented AMD ROCm code that can serve as a starting point for production inference engines. 清晰、文档完备的 ROCm 代码，可作为 AMD GPU 上生产推理引擎的起点。
 
-Photon is Moondream's purpose-built inference engine that achieves
-**~2× faster inference than vLLM** on comparable workloads and **34 ms
-end-to-end inference on an H100**.  It was originally implemented for
-NVIDIA GPUs (CUDA).  This project:
+### Background · 背景
 
-- **Analyses** the Photon architecture from the blog post
-  ["Popping the GPU Bubble"](https://moondream.ai/blog/popping-the-gpu-bubble)
-- **Ports** the three-mechanism pipelined decode loop to AMD ROCm/HIP
-- **Validates** the cost model on AMD hardware (gfx942 / MI300)
+Photon is Moondream's purpose-built inference engine that achieves **~2× faster inference than vLLM** on comparable workloads. It was originally implemented for NVIDIA GPUs (CUDA). This project analyses the Photon architecture from the blog post ["Popping the GPU Bubble"](https://moondream.ai/blog/popping-the-gpu-bubble), ports the three-mechanism pipelined decode loop to AMD ROCm/HIP, and validates the cost model on AMD hardware (gfx942 / MI300).
+Photon 是 Moondream 专为视觉语言模型打造的推理引擎，在可比工作负载上比 vLLM 快约 **2×**。它最初为 NVIDIA GPU (CUDA) 实现。本项目解析博客文章 ["Popping the GPU Bubble"](https://moondream.ai/blog/popping-the-gpu-bubble) 中的 Photon 架构，将三机制流水化解码循环移植至 AMD ROCm/HIP，并在 AMD 硬件 (gfx942 / MI300) 上验证了成本模型。
 
 ---
 
-## Three Core Mechanisms
+## Three Core Mechanisms · 三大核心机制
 
-| # | Mechanism | File | Description |
-|---|-----------|------|-------------|
-| 1 | **Ping-pong slots** | [`decode_slot.py`](./photon_amd/decode_slot.py) | Two alternating buffer sets so step $N+1$ can run while step $N$'s results are copied to CPU. |
-| 2 | **Forward now, sample later** | [`pipeline.py`](./photon_amd/pipeline.py) | Forward launches before previous commit; sampling waits on constrained-decode mask. |
-| 3 | **Zombies** | [`zombie.py`](./photon_amd/zombie.py) | Finished requests ride one extra forward instead of requiring mid-flight cancellation. |
+| # | Mechanism · 机制 | File · 文件 | Description · 描述 |
+|---|----------|------|-------------|
+| 1 | **Ping-pong slots · 乒乓槽位** | `decode_slot.py` | Two alternating buffer sets so step N+1 can run while step N's results are copied to CPU. 两套交替缓冲区使步骤 N+1 的计算可与步骤 N 的结果回传重叠。 |
+| 2 | **Forward now, sample later · 先行推理，后采样** | `pipeline.py` | Forward launches before previous commit; sampling waits on constrained-decode mask. 前向在上一轮提交之前发射；采样等待约束解码掩码就绪后执行。 |
+| 3 | **Zombies · 僵尸序列** | `zombie.py` | Finished requests ride one extra forward instead of requiring mid-flight cancellation. 已完成请求多跑一次前向作为"僵尸"，避免中途取消的复杂逻辑。 |
 
-Each mechanism is illustrated with a visual diagram on the [blog post](https://moondream.ai/blog/popping-the-gpu-bubble)
-and explained in detail in our [docs/](./docs/) directory.
-
-### The speedup formula
+The speedup formula · 加速比公式：
 
 $$\text{speedup} = \frac{T_{\text{block}}}{T_{\text{pipe}}} \times (1 - z)$$
 
-Where $z \approx 1/L$ is the *zombie tax* (see [Mechanism 3 docs](./docs/04_mechanism_zombies.md)).
-
-| Hardware | Streams | Blocking | Pipelined | Speedup |
-|----------|---------|----------|-----------|---------|
+| Hardware · 硬件 | Streams · 并发 | Blocking · 阻塞 | Pipelined · 流水线 | Speedup · 加速 |
+|----------|------|----------|-----------|---------|
 | RTX 3090 | 32 | 11.74 ms | 10.52 ms | **+11.6%** |
 | B200 | 32 | 5.55 ms | 3.98 ms | **+35.4%** |
-| MI300X | 32 | ~6.5 ms | ~5.2 ms | **~20%** _(estimated)_ |
+| MI300X (AMD) | 2 | 0.47 ms/tok | 0.30 ms/tok | **+56.1%** |
 
 ---
 
-## Quick Start
+## Quick Start · 快速开始
 
-### Requirements
-
-- **AMD GPU** with CDNA3 architecture (gfx942 / MI300 series)
-- **ROCm** 6.10+ with PyTorch 2.5+
-- **Python** 3.10–3.12
+Requirements · 环境要求：**AMD GPU** (CDNA3 / gfx942 / MI300), **ROCm** 6.10+ / PyTorch 2.5+, **Python** 3.10–3.12.
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/photon-amd.git
-cd photon-amd
-
-# Install in development mode
+git clone https://github.com/Yunle-Lee/Babe-Photon.git
+cd Babe-Photon
 pip install -e ".[dev]"
 ```
 
-### Run the benchmark
-
+Run benchmark · 运行基准测试：
 ```bash
-# Default: 8 requests, 128 tokens each, auto-calibrate GPU step time
-python -m photon_amd.benchmark
-
-# Custom: 16 requests, 256 tokens, 1.0 ms CPU overhead
-python -m photon_amd.benchmark 16 256 1.0
+python -m photon_amd.benchmark                 # default: 8 requests × 128 tokens
+python examples/bench_real_model.py            # real PyTorch Transformer + Photon pipeline
 ```
 
-### Run the demo
-
+Run real model demo · 运行真实模型：
 ```bash
-# Sleep-based simulation (no real GPU work)
-python examples/demo_pipelined.py
-
-# Real GPU simulation (uses torch matmul)
-python examples/demo_pipelined.py --real-gpu
+# Requires: pip install llama-cpp-python
+python examples/demo_real_model.py             # Gemma-4 12B through Photon pipeline
 ```
 
-### Programmatic usage
-
+Programmatic usage · 编程调用：
 ```python
-import torch
 from photon_amd import PhotonConfig, PhotonEngine, PipelineCallbacks
 from photon_amd.decode_slot import DecodeSlot
 from photon_amd.scheduler import Batch
 
-# Define your model's decode forward
-def my_decode(slot: DecodeSlot, batch: Batch, stream: torch.cuda.Stream):
+def my_decode(slot: DecodeSlot, batch: Batch, stream):
     with torch.cuda.stream(stream):
-        bs = batch.batch_size
         # ... your model forward pass ...
-        # Write to slot.logits[:bs], slot.hidden_last[:bs]
+        pass
 
-# Create and run
 config = PhotonConfig(max_batch_size=32)
-callbacks = PipelineCallbacks(do_decode=my_decode)
-engine = PhotonEngine(config, callbacks)
-
-engine.submit(prompt_token_ids=[1, 2, 3, 4], max_new_tokens=256)
+engine = PhotonEngine(config, PipelineCallbacks(do_decode=my_decode))
+engine.submit(prompt_token_ids=[1, 2, 3], max_new_tokens=256)
 engine.run()
-
 for seq_id, tokens in engine.collect_results().items():
-    print(f"Sequence {seq_id}: {len(tokens)} tokens")
+    print(f"Seq {seq_id}: {len(tokens)} tokens")
 ```
 
 ---
 
-## Project Structure
+## Architecture · 架构
 
 ```
-photon-amd/
-├── README.md                          # ← You are here
+                         ┌──────────────────────────┐
+                         │     PhotonEngine          │
+                         │  pipeline orchestration   │
+                         │  流水线编排                │
+                         ├──────────────────────────┤
+                         │  StreamManager            │
+                         │  compute + copy streams   │
+                         │  计算流 + 拷贝流            │
+                         ├──────────────────────────┤
+                         │  Scheduler  ·  调度器      │
+                         │  tick: launch→commit→     │
+                         │        finalize           │
+                         ├──────────┬───────────────┤
+                         │  Slot 0  │  Slot 1       │
+                         │  buffers │  buffers      │
+                         │  graphs  │  graphs       │
+                         │  events  │  events       │
+                         ├──────────┴───────────────┤
+                         │  GraphManager (HIP)       │
+                         │  ZombieTracker            │
+                         └──────────────────────────┘
+```
+
+Stream model · 流模型：
+```
+compute stream ──┬── Forward(N) ──────┬── Forward(N+1) ──┬── ...
+ 计算流           │                     │                    │
+copy stream    ──┴── (idle) ───────────┴── D2H copy(N) ────┴── ...
+ 拷贝流              等待                   等待
+                  step_done_event        step_done_event
+```
+
+Key insight · 核心洞见：the D2H copy goes on a separate stream, so the next forward can start immediately — the bubble is eliminated. D2H 拷贝在独立的拷贝流上执行，因此下一个前向推理可以立即开始 —— 气泡被消除。
+
+---
+
+## Project Structure · 项目结构
+
+```
+Babe-Photon/
+├── README.md                          # this file · 本文件（中英双语）
 ├── LICENSE                            # Apache 2.0
-├── pyproject.toml                     # Package metadata & dependencies
-├── .gitignore
-├── .github/
-│   └── workflows/tests.yml            # CI (CPU tests)
+├── pyproject.toml                     # package metadata · 包元信息
+├── .github/workflows/tests.yml        # CI
 │
-├── docs/                              # 📖 Learning & analysis
-│   ├── 01_photon_overview.md          #   Architecture overview
-│   ├── 02_mechanism_pingpong.md       #   Mechanism 1: Ping-pong slots
-│   ├── 03_mechanism_fsl.md            #   Mechanism 2: Forward now, sample later
-│   ├── 04_mechanism_zombies.md        #   Mechanism 3: Zombies
-│   ├── 05_gpu_bubble_analysis.md      #   Cost model & mathematical analysis
-│   ├── 06_amd_rocm_porting.md         #   NVIDIA CUDA → AMD ROCm porting guide
-│   └── 07_blog_analysis.md            #   Detailed analysis of the blog post
+├── docs/                              # English docs · 英文文档
+│   ├── 01_photon_overview.md          #   architecture overview · 架构总览
+│   ├── 02_mechanism_pingpong.md       #   mechanism 1: ping-pong slots
+│   ├── 03_mechanism_fsl.md            #   mechanism 2: forward / sample split
+│   ├── 04_mechanism_zombies.md        #   mechanism 3: zombie lifecycle
+│   ├── 05_gpu_bubble_analysis.md      #   cost model & math · 成本模型
+│   ├── 06_amd_rocm_porting.md         #   CUDA→ROCm porting guide · 移植指南
+│   └── 07_blog_analysis.md            #   blog post analysis · 博客分析
+│   └── zh/                            # 中文文档 · Chinese docs
+│       ├── 01_photon_overview.md
+│       ├── 02_mechanism_pingpong.md
+│       ├── 03_mechanism_fsl.md
+│       ├── 04_mechanism_zombies.md
+│       ├── 05_gpu_bubble_analysis.md
+│       ├── 06_amd_rocm_porting.md
+│       └── 07_blog_analysis.md
 │
-├── photon_amd/                        # 🔧 Core implementation
-│   ├── __init__.py                    #   Public API
-│   ├── config.py                      #   Configuration (dataclass)
-│   ├── stream_manager.py              #   HIP stream & event management
-│   ├── decode_slot.py                 #   Ping-pong slot buffers
+├── photon_amd/                        # core implementation · 核心实现
+│   ├── __init__.py                    #   public API
+│   ├── config.py                      #   configuration
+│   ├── stream_manager.py              #   HIP stream & event mgmt
+│   ├── decode_slot.py                 #   ping-pong slot buffers
 │   ├── graph.py                       #   HIP graph capture & replay
-│   ├── zombie.py                      #   Zombie lifecycle (Mechanism 3)
-│   ├── scheduler.py                   #   Batch assembly & tick orchestration
-│   ├── pipeline.py                    #   Main pipeline (launch/commit/finalize)
-│   └── benchmark.py                   #   Blocking vs pipelined benchmark
+│   ├── zombie.py                      #   zombie lifecycle (mechanism 3)
+│   ├── scheduler.py                   #   batch assembly & tick
+│   ├── pipeline.py                    #   launch / commit / finalize
+│   ├── benchmark.py                   #   blocking vs pipelined benchmark
+│   └── adapter.py                     #   llama-cpp-python model adapter
 │
 ├── examples/
-│   └── demo_pipelined.py              #   Demo: blocking vs pipelined
+│   ├── demo_pipelined.py              #   blocking vs pipelined demo
+│   ├── demo_real_model.py             #   real Gemma-4 12B inference
+│   ├── bench_real_gpu.py              #   GPU matmul proxy benchmark
+│   └── bench_real_model.py            #   PyTorch Transformer benchmark
 │
 └── tests/
-    ├── __init__.py
-    ├── test_zombie.py                 #   Zombie state machine tests
-    ├── test_scheduler.py              #   Scheduler & batch tests
-    └── test_slots.py                  #   GPU buffer & slot tests (requires GPU)
+    ├── test_zombie.py                 #   zombie state machine
+    ├── test_scheduler.py              #   scheduler & batch
+    └── test_slots.py                  #   GPU buffer & slot (GPU required)
 ```
 
 ---
 
-## Architecture
+## Benchmarks · 基准测试
+
+### Real model inference · 真实模型推理 (Gemma-4 12B)
 
 ```
-                         ┌─────────────────────────┐
-                         │     PhotonEngine         │
-                         │  (pipeline orchestration)│
-                         ├─────────────────────────┤
-                         │  StreamManager           │
-                         │  (compute + copy streams)│
-                         ├─────────────────────────┤
-                         │  Scheduler               │
-                         │  (tick: launch─commit─   │
-                         │   finalize)              │
-                         ├───────────┬─────────────┤
-                         │  Slot 0   │  Slot 1     │
-                         │  (buffers │  (buffers   │
-                         │   graphs  │   graphs    │
-                         │   events) │   events)   │
-                         ├───────────┴─────────────┤
-                         │  GraphManager (HIP)      │
-                         │  ZombieTracker            │
-                         └─────────────────────────┘
+[2+2]    ~5 tok/s → "4"
+[who]    ~6 tok/s → "I am Gemma 4, a large language model developed by Google."
+[haiku]  ~7 tok/s → "Lines of code flow fast, Logic builds a complex world, Errors fade away."
 ```
 
-### Stream model
+### Pipeline speedup · 流水线加速 (synthetic GPU matmul proxy)
 
-```
-compute_stream ──┬── Forward (N) ──────┬── Forward (N+1) ──┬── ...
-                 │                     │                    │
-copy_stream    ──┴── (idle) ───────────┴── D2H copy (N) ───┴── ...
-                    wait on               wait on
-                    step_done_event       step_done_event
-```
+| Load · 负载 | Blocking · 阻塞 | Pipelined · 流水线 | Speedup · 加速 |
+|------|----------|-----------|------|
+| 2 req × 128 tok | 2129 tok/s | 3323 tok/s | **+56.1%** |
+| 4 req × 128 tok | 6013 tok/s | 5992 tok/s | −0.3% |
 
-**Key insight**: The D2H copy goes on a separate stream, so the next
-forward can start immediately — the bubble is eliminated.
+The speedup is largest when CPU bookkeeping is a meaningful fraction of step time (fewer concurrent requests → larger bubble → more to hide). The benefit shrinks at high batch sizes where the GPU is already saturated — exactly as the cost model predicts.
+加速比在 CPU 簿记占步时较大比例时最显著（并发越少 → 气泡越大 → 越值得隐藏）。高批量下 GPU 已满载，加速比趋近于零 —— 与成本模型预测完全一致。
 
 ---
 
-## Testing
+## Testing · 测试
 
 ```bash
-# CPU-only tests (no GPU required)
-pytest tests/ -v -k "not gpu"
-
-# GPU tests (requires AMD GPU with ROCm)
-pytest tests/ -v -k gpu --tb=short
-
-# All tests
-pytest tests/ -v
+pytest tests/ -v                    # all tests · 全部测试
+pytest tests/ -v -k "not gpu"      # CPU-only · 仅 CPU
+pytest tests/ -v -k gpu            # GPU tests (AMD + ROCm) · GPU 测试
 ```
 
 ---
 
-## Documentation
+## Porting Notes · 移植说明
 
-Each document in `docs/` is a self-contained deep dive:
+Photon-AMD runs on AMD GPUs through PyTorch's ROCm backend, which provides transparent CUDA→HIP mapping.
+Photon-AMD 通过 PyTorch 的 ROCm 后端在 AMD GPU 上运行，利用其透明的 CUDA→HIP 映射。
 
-| Document | Contents |
-|----------|----------|
-| [`01_photon_overview.md`](./docs/01_photon_overview.md) | System architecture, component diagram, stream model, per-tick lifecycle |
-| [`02_mechanism_pingpong.md`](./docs/02_mechanism_pingpong.md) | Ping-pong slot protocol, pinned memory, D2H copy on copy stream |
-| [`03_mechanism_fsl.md`](./docs/03_mechanism_fsl.md) | Forward/sampling split, commit-before-finalize ordering, constrained decoding |
-| [`04_mechanism_zombies.md`](./docs/04_mechanism_zombies.md) | Zombie lifecycle, inflight_refs, zombie tax analysis, resource reclamation |
-| [`05_gpu_bubble_analysis.md`](./docs/05_gpu_bubble_analysis.md) | Mathematical model, bubble growth with GPU speed, prefill interleaving |
-| [`06_amd_rocm_porting.md`](./docs/06_amd_rocm_porting.md) | CUDA→HIP mapping, performance characteristics, testing strategy |
-| [`07_blog_analysis.md`](./docs/07_blog_analysis.md) | Critical analysis of the blog post, open questions, porting insights |
-
----
-
-## Porting Notes
-
-Photon-AMD runs on AMD GPUs through PyTorch's ROCm backend, which provides
-transparent CUDA→HIP mapping:
-
-| CUDA API | ROCm/HIP equivalent | PyTorch API |
-|----------|---------------------|-------------|
+| CUDA API | ROCm/HIP | PyTorch API |
+|----------|----------|-------------|
 | `cudaStream_t` | `hipStream_t` | `torch.cuda.Stream` |
 | `cudaEvent_t` | `hipEvent_t` | `torch.cuda.Event` |
 | `cudaGraph_t` | `hipGraph_t` | `torch.cuda.CUDAGraph` |
-| `cudaHostAlloc` | `hipHostMalloc` | `tensor.pin_memory()` |
-| `cudaMemcpyAsync` | `hipMemcpyAsync` | `tensor.copy_(non_blocking=True)` |
 
-Key differences:
-- **HIP graph capture** requires stricter adherence to fixed-shape,
-  pre-allocated buffer patterns (already satisfied by Photon's design).
-- **Runtime `hipMalloc` can trigger device-wide sync** — all buffers MUST
-  be pre-allocated at init time (already done by Photon).
-- **`float16` is recommended** over `bfloat16` on gfx942 for optimal
-  memory-bandwidth utilisation.
-
-See [`docs/06_amd_rocm_porting.md`](./docs/06_amd_rocm_porting.md) for the
-full porting guide.
+Key differences · 主要差异：HIP graph capture requires stricter fixed-shape / pre-allocated buffer patterns (already satisfied by Photon's design). Runtime `hipMalloc` can trigger device-wide sync — all buffers MUST be pre-allocated. `float16` is recommended over `bfloat16` on gfx942 for optimal bandwidth.
+HIP 图捕获对固定形状 / 预分配缓冲区的模式要求更严格（Photon 的设计天然符合）。运行时 `hipMalloc` 可能触发设备级同步 —— 所有缓冲区必须在初始化时预分配。建议使用 `float16` 而非 `bfloat16` 以获得 gfx942 上的最佳内存带宽利用率。
 
 ---
 
-## Benchmarks
+## References · 参考文献
 
-### On AMD Instinct MI300 (gfx942)
-
-Run with: `python -m photon_amd.benchmark`
-
-Expected output pattern:
-```
-Mode                                tok/s    ms/step
----------------------------------------------------------
-  blocking (1 slot, no overlap)      48.5      20.64
-  pipelined (2 slots, no graphs)     52.3      19.14
-  pipelined (2 slots + HIP graphs)   54.7      18.31
-
-  Pipeline speedup: +12.8%
-  Effective GPU utilisation improvement: 92% → 100%
-```
-
-The benchmark uses a CPU-sleep simulation calibrated to actual GPU step
-times (measured via ``llama-bench`` on the Gemma-4-12B quantised model),
-isolating pipeline efficiency from model performance.
+- **Moondream Blog · 博客**: ["Popping the GPU Bubble"](https://moondream.ai/blog/popping-the-gpu-bubble) (2026-06-04)
+- **Moondream Docs · 文档**: [Running Locally](https://docs.moondream.ai/running-locally)
+- **Kestrel** (Photon reference): [github.com/m87-labs/kestrel](https://github.com/m87-labs/kestrel)
+- **Moondream**: [github.com/m87-labs/moondream](https://github.com/m87-labs/moondream)
+- **AMD ROCm**: [rocm.docs.amd.com](https://rocm.docs.amd.com/)
 
 ---
 
-## References
+## License · 许可证
 
-1. **Moondream Blog**: ["Popping the GPU Bubble"](https://moondream.ai/blog/popping-the-gpu-bubble) (2026-06-04)
-   — The original blog post describing Photon's three mechanisms.
-2. **Moondream Docs**: [Running Locally](https://docs.moondream.ai/running-locally)
-   — Official documentation for Photon.
-3. **Kestrel**: [github.com/m87-labs/kestrel](https://github.com/m87-labs/kestrel)
-   — Photon's reference implementation (NVIDIA CUDA).
-4. **Moondream**: [github.com/m87-labs/moondream](https://github.com/m87-labs/moondream)
-   — The open-source vision-language model.
-5. **AMD ROCm**: [rocm.docs.amd.com](https://rocm.docs.amd.com/)
-6. **HIP Porting Guide**: [AMD HIP Documentation](https://rocm.docs.amd.com/en/latest/how-to/hipify/hip_porting_guide.html)
-
----
-
-## License
-
-Apache 2.0 — see [LICENSE](./LICENSE).
-
-All credit for the Photon architecture and the three-mechanism design
-goes to **Moondream (M87 Labs)**.  This project is an independent
-educational implementation and port.
+Apache 2.0 — see [LICENSE](./LICENSE). All credit for the Photon architecture and the three-mechanism design goes to **Moondream (M87 Labs)**. This project is an independent educational implementation and port.
+Apache 2.0 —— 详见 [LICENSE](./LICENSE)。Photon 架构及三大机制设计的全部功劳归 **Moondream (M87 Labs)** 所有。本项目为独立的教育实现与移植。
